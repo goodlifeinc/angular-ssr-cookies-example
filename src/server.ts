@@ -1,16 +1,18 @@
-import { APP_BASE_HREF } from '@angular/common';
-import { CommonEngine, isMainModule } from '@angular/ssr/node';
+import { AngularNodeAppEngine, createNodeRequestHandler, isMainModule, writeResponseToNodeResponse } from '@angular/ssr/node';
 import express from 'express';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import bootstrap from './main.server';
+
+import { InjectionToken } from '@angular/core';
+import { Request, Response } from 'express';
+export const REQUEST = new InjectionToken<Request>('REQUEST');
+export const RESPONSE = new InjectionToken<Response>('RESPONSE');
 
 const serverDistFolder = dirname(fileURLToPath(import.meta.url));
 const browserDistFolder = resolve(serverDistFolder, '../browser');
-const indexHtml = join(serverDistFolder, 'index.server.html');
 
 const app = express();
-const commonEngine = new CommonEngine();
+const angularApp = new AngularNodeAppEngine();
 
 /**
  * Example Express Rest API endpoints can be defined here.
@@ -27,30 +29,44 @@ const commonEngine = new CommonEngine();
 /**
  * Serve static files from /browser
  */
-app.get(
-  '**',
+
+app.use(
   express.static(browserDistFolder, {
     maxAge: '1y',
-    index: 'index.html'
+    index: false,
+    redirect: false,
   }),
 );
 
-/**
- * Handle all other requests by rendering the Angular application.
- */
-app.get('**', (req, res, next) => {
-  const { protocol, originalUrl, baseUrl, headers } = req;
+const COOKIE_NAME = 'test-cookie';
 
-  commonEngine
-    .render({
-      bootstrap,
-      documentFilePath: indexHtml,
-      url: `${protocol}://${headers.host}${originalUrl}`,
-      publicPath: browserDistFolder,
-      providers: [{ provide: APP_BASE_HREF, useValue: baseUrl }],
+app.get('/test', (req, res) => {
+  res.setHeader('Test-Header', 'Test-Value');
+  if (!req.headers['cookie'] || !req.headers['cookie'].includes(COOKIE_NAME)) {
+    res.setHeader('Set-Cookie', `${COOKIE_NAME}=test-value; HttpOnly; Path=/; SameSite=Lax`);
+  }
+  res.json({
+    message: 'Hello from the server!',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/**', async(req, res, next) => {
+  if (!req.headers['cookie'] || !req.headers['cookie'].includes(COOKIE_NAME)) {
+    const cookieResponse = await fetch('http://localhost:4000/test');
+    const setCookie = cookieResponse.headers.get('set-cookie');
+    req.headers['set-cookie'] = [setCookie || ''];
+    res.req = req;
+  }  
+  angularApp
+    .handle(req)
+    .then(response => {
+      if (req.headers['set-cookie']) {
+        res.setHeader('Set-Cookie', req.headers['set-cookie']);
+      }
+      response ? writeResponseToNodeResponse(response, res) : next();
     })
-    .then((html) => res.send(html))
-    .catch((err) => next(err));
+    .catch(next);
 });
 
 /**
@@ -59,7 +75,10 @@ app.get('**', (req, res, next) => {
  */
 if (isMainModule(import.meta.url)) {
   const port = process.env['PORT'] || 4000;
+
   app.listen(port, () => {
     console.log(`Node Express server listening on http://localhost:${port}`);
   });
 }
+
+export const reqHandler = createNodeRequestHandler(app);
