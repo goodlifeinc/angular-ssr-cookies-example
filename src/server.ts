@@ -3,11 +3,6 @@ import express from 'express';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { InjectionToken } from '@angular/core';
-import { Request, Response } from 'express';
-export const REQUEST = new InjectionToken<Request>('REQUEST');
-export const RESPONSE = new InjectionToken<Response>('RESPONSE');
-
 const serverDistFolder = dirname(fileURLToPath(import.meta.url));
 const browserDistFolder = resolve(serverDistFolder, '../browser');
 
